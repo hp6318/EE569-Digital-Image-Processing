@@ -1,0 +1,2349 @@
+//EE569 ---  HW2_Q1A ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Sobel edge detection
+//Arguments to be passed: 5
+    //1) Input image file(raw)
+    //2) Gradient_x output file(raw)
+    //3) Gradient_y output file(raw)
+    //4) Gradient Magnitude output file(raw)
+    //5) Sobel binary edge map(raw) 
+//Location to excel file to write CDF values(gradient magnitude) is hard-coded at Line 221
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+//sobel_x filter
+const float sobel_x[3][3] = {
+    {-1, 0, 1},
+    {-2, 0, 2},
+    {-1, 0, 1}
+};
+
+//sobel_y filter
+const float sobel_y[3][3] = {
+    {1, 2, 1},
+    {0, 0, 0},
+    {-1, -2, -1}
+};
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+int clip(float value){
+     int out=0;
+    if (value>255){
+        out=255;
+    }
+    else if (value<0){
+        out=0;
+    }
+    else{
+        out=floor(value);
+    }
+    return out;
+}
+
+float convolution(unsigned char *img_padd,const float filter[3][3],int filter_size,int img_x,int img_y,int rows,int cols){
+    int filter_x=0;
+    int filter_y=0;
+    float sum_val=0;  
+    float mul_val=0;
+	
+    for (int i=img_x;i<img_x+filter_size;i++){
+        for (int j=img_y;j<img_y+filter_size;j++){
+			mul_val=*((img_padd+i*cols+j)) * filter[filter_x][filter_y];
+            filter_y+=1;
+            sum_val=sum_val+mul_val;
+        }
+        filter_x+=1;
+        filter_y=0;
+    }
+    //sum_val=sum_val/16;
+    return sum_val;
+}
+
+void normalize(float *grad_xy,double max, double min,unsigned char *grad_out,int size_x,int size_y){
+    for (int i=0; i<size_x; i++){
+        for (int j=0; j<size_y; j++){
+            *(grad_out+i*size_y+j)=(255*(*(grad_xy+i*size_y+j)-min))/(max-min);
+        }
+    }
+}
+
+
+int main(int argc, char *argv[]){
+    const int Size_x=321; //height
+    const int Size_y=481; //width
+    const int Bpp=3; //rgb
+
+    //Allocate dynamic memory for input image container
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+
+    cout<<"The image Matrix is "<<endl;
+    //values are stored RGB, RGB, RGB. Imagedata points to 0th index which is 'R' 
+    //value of 0th row & 0th column
+    for (int i=0;i<5;i++){
+        cout<<(int)*(Imagedata+3*i)<<" "<<(int)*(Imagedata+3*i+1)<<" "<<(int)*(Imagedata+3*i+2)<<","<<" ";
+    }
+    cout<<endl;
+
+    //Allocate dynamic memory for grayscale image container
+    unsigned char *Imagedata_gray=new (nothrow) unsigned char [Size_x*Size_y*1];
+    //extract the luminance channel, Y channel.
+    for (int i=0;i<Size_x*Size_y;i++){
+        *(Imagedata_gray+i)=*(Imagedata+3*i)*0.2989 + *(Imagedata+3*i+1)*0.5870 + *(Imagedata+3*i+2)*0.1140 ;
+    }
+    
+    //delete the memory of input rgb image
+     delete[] Imagedata;
+
+    //allocate memory for padded image 
+    const int padd_size_x=Size_x+2;
+	const int padd_size_y=Size_y+2;
+    unsigned char img_padd[padd_size_x][padd_size_y][1];
+    
+    //copying the center core 
+    for (int i=0;i<padd_size_x-2;i++){
+        for (int j=0;j<padd_size_y-2;j++){
+            img_padd[i+1][j+1][0]=*(Imagedata_gray+i*Size_y+j);
+        }
+    }
+    //adding reflected column on left
+    for (int i=0;i<padd_size_x-2;i++){
+        img_padd[i+1][0][0]=*(Imagedata_gray+1+i*Size_y);
+    }
+    //adding reflected column on right
+    for (int i=0;i<padd_size_x-2;i++){
+        img_padd[i+1][padd_size_y-1][0]=*(Imagedata_gray+(Size_y-2)+i*Size_y);
+    }
+    //adding reflected row on top and bottom
+    for (int i=0;i<padd_size_y;i++){
+        img_padd[0][i][0]=img_padd[2][i][0];
+        img_padd[padd_size_x-1][i][0]=img_padd[padd_size_x-3][i][0];
+    }
+
+    //compute x_gradient and y_gradient by convolving with sobel filter and padded image
+    float gradient_x [Size_x][Size_y];
+    float gradient_y [Size_x][Size_y];
+	int filter_size=3;
+		int filter_size=3;
+	double xgrad_max=0;
+    double xgrad_min=0;
+	double ygrad_max=0;
+    double ygrad_min=0;
+	
+	for (int i=1;i<Size_x+1;i++){
+		for (int j=1;j<Size_y+1;j++){
+            float result = convolution((unsigned char *)img_padd,sobel_x,3,i-1,j-1,padd_size_x,padd_size_y);
+            if (result>xgrad_max){
+                xgrad_max=result;
+            }
+            if (result<xgrad_min){
+                xgrad_min=result;
+            }
+		gradient_x[i-1][j-1]=floor(result);
+            result = convolution((unsigned char *)img_padd,sobel_y,3,i-1,j-1,padd_size_x,padd_size_y);
+		if (result>ygrad_max){
+                ygrad_max=result;
+            }
+            if (result<ygrad_min){
+                ygrad_min=result;
+            }
+            gradient_y[i-1][j-1]=floor(result);
+        }
+    }
+
+
+    //normalize the gradient x and y to 0-255 in order to visulaize. 
+    //Allocate dynamic memory for gradient_x image container
+    unsigned char *grad_x=new (nothrow) unsigned char [Size_x*Size_y];
+    normalize(*gradient_x,xgrad_max, xgrad_min,grad_x,Size_x,Size_y);
+    write(argv[2],grad_x,1,Size_x,Size_y);
+    delete[] grad_x;
+
+    //Allocate dynamic memory for gradient_y image container
+    unsigned char *grad_y=new (nothrow) unsigned char [Size_x*Size_y];
+    normalize(*gradient_y,ygrad_max, ygrad_min,grad_y,Size_x,Size_y);
+    write(argv[3],grad_y,1,Size_x,Size_y);
+    delete[] grad_y;
+
+    //compute gradient magnitude= sqrt (grad_x^2 + grad_y^2)
+    float grad_mag[Size_x][Size_y];
+	double grad_max=0;
+    double grad_min=sqrt(pow(gradient_x[0][0],2)+pow(gradient_y[0][0],2));
+    for (int i=0;i<Size_x;i++){
+        for (int j=0;j<Size_y;j++){
+            grad_mag[i][j]=sqrt(pow(gradient_x[i][j][0],2)+pow(gradient_y[i][j][0],2));
+		if (grad_mag[i][j]>grad_max){
+                grad_max=grad_mag[i][j];
+            }
+            if (grad_mag[i][j]<grad_min){
+                xgrad_min=grad_mag[i][j];
+            }
+        }
+    }
+    //normalize the gradient magnitude to 0-255 in order to visulaize. 
+    //Allocate dynamic memory for gradient_magnitude image container
+    unsigned char *gradient_mag=new (nothrow) unsigned char [Size_x*Size_y];
+    normalize(*grad_mag,grad_max, grad_min,gradient_mag,Size_x,Size_y);
+    write(argv[4],gradient_mag,1,Size_x,Size_y);
+    delete[] gradient_mag;
+
+    //compute pdf of gradient magnitude by dividing by 255 and clipping it to 0-255.
+    double histogram[256]={0}; //0-255 intensity values
+    for (int i=0;i<Size_x;i++){
+        for (int j=0;j<Size_y;j++){
+            histogram[clip(grad_mag[i][j])]=histogram[clip(grad_mag[i][j])]+1;
+        }
+    }
+
+    int total_px=Size_x*Size_y;
+    double pdf[256]={0}; 
+    cout<<"PDF"<<endl;
+    for (int i=0;i<256;i++){
+        pdf[i]=histogram[i]/total_px;
+        //cout<<i<<"-"<<pdf[i]<<endl;
+    }
+
+    //compute cdf by cummulative addition of pdf with increasing value of gradient magnitude
+    double cdf[256]={0};
+    cdf[0]=pdf[0];
+    cout<<"CDF"<<endl;
+    for (int i=1;i<256;i++){
+        cdf[i]=cdf[i-1]+pdf[i];
+        //cout<<i<<"-"<<cdf[i]<<endl;
+    }    
+    //exporting the cdf values to excel for plotting
+    fstream fout;
+    fout.open("E:\\usc\\Spring'22\\EE569 Image processing\\HW2\\results\\tiger_hist.csv", ios::out | ios::app);
+    for (int i=0;i<256;i++){
+        fout<<i<<","<<cdf[i]<<"\n";
+    }
+    fout.close();
+
+    //find the threshold value by capping the cdf at defined %
+    float thres_per =0.95;
+    int threshold=0;
+    while (threshold<256){
+        if(cdf[threshold]>thres_per){
+            break;
+        }
+        threshold++;
+    }
+    threshold=threshold-1;
+    cout<<"threshold is "<<threshold<<endl;
+
+    //assign memory for output binary image container
+    unsigned char *output=new (nothrow) unsigned char [Size_x*Size_y];
+    //create edge map by comparing gradient magnitude values with threshold.
+    for (int i=0;i<Size_x;i++){
+        for (int j=0;j<Size_y;j++){
+            if (grad_mag[i][j]>=threshold){
+                *(output+i*Size_y+j)=0; // black edge 
+            }
+            else{
+                *(output+i*Size_y+j)=255;  //white background
+            }
+        }
+    }
+    write(argv[5],output,1,Size_x,Size_y);
+
+
+
+    // cout << "The input image is" <<endl;
+	// for (int i=0;i<5;i++){
+	// 	for (int j=0;j<5;j++){
+	// 		cout<< (int)*(Imagedata_gray+i*Size_y+j)<<",";
+	// 	}
+	// 	cout<<endl;
+    // }
+
+
+    // cout << "The padded image is" <<endl;
+	// for (int i=0;i<5;i++){
+	// 	for (int j=0;j<5;j++){
+	// 		cout<< (int)img_padd[i][j][0]<<",";
+	// 	}
+	// 	cout<<endl;
+    // }
+
+    // cout << "The gradient_x is" <<endl;
+	// for (int i=0;i<5;i++){
+	// 	for (int j=0;j<5;j++){
+	// 		cout<< (int)gradient_x[i][j][0]<<",";
+	// 	}
+	// 	cout<<endl;
+    // }
+
+
+    // cout << "The gradient_y is" <<endl;
+	// for (int i=0;i<5;i++){
+	// 	for (int j=0;j<5;j++){
+	// 		cout<< (int)gradient_y[i][j][0]<<",";
+	// 	}
+	// 	cout<<endl;
+    // }
+
+
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+    
+
+
+//EE569 ---  HW2_Q1b ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio Code --- g++ compiler 
+//Project: Canny Edge Detection
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+
+#include "opencv2/imgproc.hpp"
+#include "opencv2/highgui.hpp"
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+#define _CRT_SECURE_NO_DEPRECATE
+
+using namespace std;
+using namespace cv;
+
+void read(const char* filename, void* image_mat, int bpp, int size_x, int size_y) {
+    FILE* file;
+    if (!(file = fopen(filename, "r"))) {
+        cout << "Cannot open file: " << filename << endl;
+        exit(1);
+    }
+    fread(image_mat, sizeof(unsigned char), size_x * size_y * bpp, file);
+    fclose(file);
+}
+
+void write(const char* filename, void* image_mat, int bpp, int size_x, int size_y) {
+    FILE* file;
+    if (!(file = fopen(filename, "w"))) {
+        cout << "Cannot open file: " << filename << endl;
+        exit(1);
+    }
+    fwrite(image_mat, sizeof(unsigned char), size_x * size_y * bpp, file);
+    fclose(file);
+}
+
+
+
+//Mat src, src_gray;
+//Mat dst, detected_edges;
+//int lowThreshold = 0;  
+//const int max_lowThreshold = 100; //gradient magnitude values lower than this are classified as no edge
+//const int ratio = 3; // recommended to have higher threshold value in ratio of either 2:1 or 3:1
+//const int kernel_size = 3; //sobel filter size 
+//const char* window_name = "Edge Map";  //Display image window
+
+
+//static void CannyThreshold(int, void*)
+//{
+//    blur(src_gray, detected_edges, Size(3, 3));
+//    Canny(detected_edges, detected_edges, lowThreshold, lowThreshold * 3, kernel_size);
+//    dst = Scalar::all(0);
+//    src.copyTo(dst, detected_edges);
+//    imshow(window_name, dst);
+//}
+
+
+
+int main(int argc, char** argv)
+{
+    const int Size_x = 321; //height
+    const int Size_y = 481; //width
+    const int Bpp = 3; //rgb
+
+    //Allocate dynamic memory for input image container
+    unsigned char* Imagedata = new (nothrow) unsigned char[Size_x * Size_y * Bpp];
+    read(argv[1], Imagedata, Bpp, Size_x, Size_y);
+    
+    //Convert unsigned char array to opencv matrix object
+    Mat input_img(Size_x, Size_y, CV_8UC3, Imagedata); 
+    
+    //delete[] Imagedata;
+
+    //convert RGB to grayscale 
+    Mat gray_img;
+    cvtColor(input_img, gray_img, COLOR_RGB2GRAY);
+    
+    //blur the image with defined kernel size
+    int kernel_size = 3;
+    Mat img_blur;
+    blur(gray_img, img_blur, Size(kernel_size, kernel_size));
+
+    //Apply Canny edge
+    Mat canny_img;
+    Canny(img_blur, canny_img, 100, 250, 3, false); //low_thres=100, high_thres=250 kernel=3x3
+
+    //reverse the px with edges=0, background=255
+    for (int i = 0;i < Size_x;i++) {
+        for (int j = 0;j < Size_y;j++) {
+            if (canny_img.at<char>(i, j) == 0) {
+                canny_img.at<char>(i, j) = 255;
+            }
+            else {
+                canny_img.at<char>(i, j) = 0;
+            }
+        }
+    }
+
+
+    //Display the edge map.
+    imshow("Canny_edges", canny_img);
+    waitKey(0);
+    destroyAllWindows();
+
+    //write the output image 
+    imwrite(argv[2], canny_img);
+
+
+
+
+
+
+    //src = imread(argv[1]); // Load an image
+    //imshow("input", src);
+    //waitKey(0);
+    //if (src.empty())
+    //{
+    //    std::cout << "Could not open or find the image!\n" << std::endl;
+    //    std::cout << "Usage: " << argv[0] << " <Input image>" << std::endl;
+    //    return -1;
+    //}
+    //dst.create(src.size(), src.type());
+    //cvtColor(src, src_gray, COLOR_BGR2GRAY);
+    //namedWindow(window_name, WINDOW_AUTOSIZE);
+    //createTrackbar("Min Threshold:", window_name, &lowThreshold, max_lowThreshold, CannyThreshold);
+    //CannyThreshold(0, 0);
+    //waitKey(0);
+
+    //imwrite(argv[2], )
+    return 0;
+}
+
+
+%EE569 ---  HW2_Q1c ---  Hardik Prajapati --- 2678294168 
+%Windows --- matlab2017b 
+%Project: Structured Edge detection
+%Arguments to be passed: 0
+%input image file location and output image file locations are hard-coded. 
+%@credits: open_source code provided by the TA 
+
+
+% Demo for Structured Edge Detector (please see readme.txt first).
+
+%% set opts for training (see edgesTrain.m)
+opts=edgesTrain();                % default options (good settings)
+opts.modelDir='models/';          % model will be in models/forest
+opts.modelFnm='modelBsds';        % model name
+opts.nPos=5e5; opts.nNeg=5e5;     % decrease to speedup training
+opts.useParfor=0;                 % parallelize if sufficient memory
+
+%% train edge detector (~20m/8Gb per tree, proportional to nPos/nNeg)
+tic, model=edgesTrain(opts); toc; % will load model if already trained
+
+%% set detection parameters (can set after training)
+model.opts.multiscale=0;          % for top accuracy set multiscale=1
+model.opts.sharpen=2;             % for top speed set sharpen=0
+model.opts.nTreesEval=4;          % for top speed set nTreesEval=1
+model.opts.nThreads=4;            % max number threads for evaluation
+model.opts.nms=0;                 % set to true to enable nms
+
+%% evaluate edge detector on BSDS500 (see edgesEval.m)
+if(0), edgesEval( model, 'show',1, 'name','' ); end
+
+%% detect edge and visualize results
+I = imread('HW2_images/Pig.jpg');
+tic, E=edgesDetect(I,model); toc
+figure(1); im(I); figure(2); im(1-E);
+
+%% generate edge map: Probability>threshold = 0 (edge) else 255(background)
+%%E(1,1)
+edge_map=zeros(321,481);
+thresh=0.15;
+for i=1:321
+    for j=1:481
+        if E(i,j)>thresh
+            edge_map(i,j)=0;
+        else
+            edge_map(i,j)=255;
+        end
+    end
+end
+figure(3); im(edge_map);
+
+%%save probability edge image
+imwrite(1-E,'C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_probability.jpg');
+
+%%save edge map image
+imwrite(edge_map,'C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_0point15.jpg');
+%complete
+
+
+function [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg( E, G, varargin )
+
+%EE569 ---  HW2_Q1d_1 ---  Hardik Prajapati --- 2678294168 
+%Windows --- matlab2017b 
+%Project: Edges evaluation: (part1) for Sobel And SE
+%Arguments to be passed: 2 can be passed as below
+%%edgesEvalImg('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_probability.jpg' , 'HW2_images/Pig_GT.mat', {'out','C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_score.csv','thrs',5, 'maxDist',.0075, 'thin',1 })
+%input image file location and output image file locations are hard-coded. 
+%@credits: open_source code provided by the TA 
+
+%%edgesEvalImg('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_probability.jpg' , 'HW2_images/Pig_GT.mat', {'out','C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_score.csv','thrs',5, 'maxDist',.0075, 'thin',1 })
+
+% Calculate edge precision/recall results for single edge image.
+%
+% Enhanced replacement for evaluation_bdry_image() from BSDS500 code:
+%  http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/
+% Uses same format and is fully compatible with evaluation_bdry_image.
+% Given default prms results are *identical* to evaluation_bdry_image.
+%
+% In addition to performing the evaluation, this function can optionally
+% create a visualization of the matches and errors for a given edge result.
+% The visualization of edge matches V has the following color coding:
+%  green=true positive, blue=false positive, red=false negative
+% If multiple ground truth labels are given the false negatives have
+% varying strength (and true positives can match *any* ground truth).
+%
+% This function calls the mex file correspondPixels. Pre-compiled binaries
+% for some systems are provided in /private, source for correspondPixels is
+% available as part of the BSDS500 dataset (see link above). Note:
+% correspondPixels is computationally expensive and very slow in practice.
+%
+% USAGE
+%  [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg( E, G, [prms] )
+%
+% INPUTS
+%  E          - [h x w] edge probability map (may be a filename)
+%  G          - file containing a cell of ground truth boundaries
+%  prms       - parameters (struct or name/value pairs)
+%   .out        - [''] optional output file for writing results
+%   .thrs       - [99] number or vector of thresholds for evaluation
+%   .maxDist    - [.0075] maximum tolerance for edge match
+%   .thin       - [1] if true thin boundary maps
+%
+% OUTPUTS
+%  thrs       - [Kx1] vector of threshold values
+%  cntR,sumR  - [Kx1] ratios give recall per threshold
+%  cntP,sumP  - [Kx1] ratios give precision per threshold
+%  V          - [hxwx3xK] visualization of edge matches
+%
+% EXAMPLE
+%
+% See also edgesEvalDir
+%
+% Structured Edge Detection Toolbox      Version 3.01
+% Code written by Piotr Dollar, 2014.
+% Licensed under the MSR-LA Full Rights License [see license.txt]
+
+% get additional parameters
+dfs={ 'out','', 'thrs',99, 'maxDist',.0075, 'thin',1 };
+[out,thrs,maxDist,thin] = getPrmDflt(varargin,dfs,1);
+if(any(mod(thrs,1)>0)), K=length(thrs); thrs=thrs(:); else
+  K=thrs; thrs=linspace(1/(K+1),1-1/(K+1),K)'; end
+
+% load edges (E) and ground truth (G)
+if(all(ischar(E))), E=double(imread(E))/255; end
+G=load(G); G=G.groundTruth; n=length(G);
+for g=1:n, G{g}=double(G{g}.Boundaries); end
+
+% evaluate edge result at each threshold
+Z=zeros(K,1); cntR=Z; sumR=Z; cntP=Z; sumP=Z;
+if(nargout>=6), V=zeros([size(E) 3 K]); end
+precision_per_threshold_perGT=zeros(K,n);
+recall_per_threshold_perGT=zeros(K,n);
+meanP_perGT=zeros(n);
+meanR_perGT=zeros(n);
+
+for k = 1:K
+  % threshhold and thin E
+  E1 = double(E>=max(eps,thrs(k)));
+  if(thin), E1=double(bwmorph(E1,'thin',inf)); end
+  % compare to each ground truth in turn and accumualte
+  Z=zeros(size(E)); matchE=Z; matchG=Z; allG=Z;
+  for g = 1:n
+    [matchE1,matchG1] = correspondPixels(E1,G{g},maxDist);
+    matchE = matchE | matchE1>0;
+    matchG = matchG + double(matchG1>0);
+    allG = allG + G{g};
+    matchG_r=double(matchG1>0);
+    matchE1_p=matchE1>0;
+    recall_per_threshold_perGT(k,g)=sum(matchG_r(:))/sum(G{g}(:));
+    precision_per_threshold_perGT(k,g)=nnz(matchE1_p)/nnz(E1);
+    
+
+  end
+  % compute recall (summed over each gt image)
+  cntR(k) = sum(matchG(:)); sumR(k) = sum(allG(:));
+  % compute precision (edges can match any gt image)
+  cntP(k) = nnz(matchE); sumP(k) = nnz(E1);
+  % optinally create visualization of matches
+  if(nargout<6), continue; end; cs=[1 0 0; 0 .7 0; .7 .8 1]; cs=cs-1;
+  FP=E1-matchE; TP=matchE; FN=(allG-matchG)/n;
+  for g=1:3, V(:,:,g,k)=max(0,1+FN*cs(1,g)+TP*cs(2,g)+FP*cs(3,g)); end
+  V(:,2:end,:,k) = min(V(:,2:end,:,k),V(:,1:end-1,:,k));
+  V(2:end,:,:,k) = min(V(2:end,:,:,k),V(1:end-1,:,:,k));
+end
+meanP_perGT=zeros(n);
+meanR_perGT=zeros(n);
+for g=1:n
+    meanP_perGT(g)=sum(precision_per_threshold_perGT(:,g))/K; %mean Precision across all all thresholds per GT
+    meanR_perGT(g)=sum(recall_per_threshold_perGT(:,g))/K; %mean Recall across all all thresholds per GT
+end
+overallP=sum(meanP_perGT(:))/n; %Overall Precision, Q1_d_1
+overallR=sum(meanR_perGT(:))/n; %Overall Recall, Q1_d_1
+
+overall_F=(2*overallP*overallR)/(overallP+overallR);
+
+    
+disp(recall_per_threshold_perGT)
+fprintf("\n")
+disp(recall_per_threshold_perGT(1,3))
+fprintf("Hello\n")
+disp(precision_per_threshold_perGT)
+
+% if output file specified write results to disk
+if(isempty(out)), return; end; fid=fopen(out,'w'); assert(fid~=1);
+%fprintf(fid,'%10g , %10g, %10g, %10g, %10g\n',[thrs cntR sumR cntP sumP]');
+fprintf(fid,'Recall');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5 ');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',k');
+    for g=1:n
+        fprintf(fid,'%10g ,',recall_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'\n');
+end
+
+fprintf(fid,'MeanR_perGT,');
+for g=1:n
+    fprintf(fid,'%10g ,',meanR_perGT(g)');
+end
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall Recall , %10g ',overallR');
+fprintf(fid,'\n');
+
+fprintf(fid,'Precision');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5 ');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',k');
+    for g=1:n
+        fprintf(fid,'%10g ,',precision_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'\n');
+end
+fprintf(fid,'MeanP_perGT,');
+for g=1:n
+    fprintf(fid,'%10g ,',meanP_perGT(g)');
+end
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall Precision , %10g ,',overallP');
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall F_score , %10g ,',overall_F');
+
+
+fclose(fid);
+
+end
+%complete
+
+
+function [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg_2( E, G, varargin )
+%EE569 ---  HW2_Q1d_2 ---  Hardik Prajapati --- 2678294168 
+%Windows --- matlab2017b 
+%Project: Edges evaluation: (part2) For Sobel and Canny
+%Arguments to be passed: 2 can be passed as below
+%%edgesEvalImg('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_probability.jpg' , 'HW2_images/Pig_GT.mat', {'out','C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_se_score2.csv','thrs',5, 'maxDist',.0075, 'thin',1 })
+%input image file location and output image file locations are hard-coded. 
+%@credits: open_source code provided by the TA 
+
+% Calculate edge precision/recall results for single edge image.
+%
+% Enhanced replacement for evaluation_bdry_image() from BSDS500 code:
+%  http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/
+% Uses same format and is fully compatible with evaluation_bdry_image.
+% Given default prms results are *identical* to evaluation_bdry_image.
+%
+% In addition to performing the evaluation, this function can optionally
+% create a visualization of the matches and errors for a given edge result.
+% The visualization of edge matches V has the following color coding:
+%  green=true positive, blue=false positive, red=false negative
+% If multiple ground truth labels are given the false negatives have
+% varying strength (and true positives can match *any* ground truth).
+%
+% This function calls the mex file correspondPixels. Pre-compiled binaries
+% for some systems are provided in /private, source for correspondPixels is
+% available as part of the BSDS500 dataset (see link above). Note:
+% correspondPixels is computationally expensive and very slow in practice.
+%
+% USAGE
+%  [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg( E, G, [prms] )
+%
+% INPUTS
+%  E          - [h x w] edge probability map (may be a filename)
+%  G          - file containing a cell of ground truth boundaries
+%  prms       - parameters (struct or name/value pairs)
+%   .out        - [''] optional output file for writing results
+%   .thrs       - [99] number or vector of thresholds for evaluation
+%   .maxDist    - [.0075] maximum tolerance for edge match
+%   .thin       - [1] if true thin boundary maps
+%
+% OUTPUTS
+%  thrs       - [Kx1] vector of threshold values
+%  cntR,sumR  - [Kx1] ratios give recall per threshold
+%  cntP,sumP  - [Kx1] ratios give precision per threshold
+%  V          - [hxwx3xK] visualization of edge matches
+%
+% EXAMPLE
+%
+% See also edgesEvalDir
+%
+% Structured Edge Detection Toolbox      Version 3.01
+% Code written by Piotr Dollar, 2014.
+% Licensed under the MSR-LA Full Rights License [see license.txt]
+
+% get additional parameters
+dfs={ 'out','', 'thrs',99, 'maxDist',.0075, 'thin',1 };
+[out,thrs,maxDist,thin] = getPrmDflt(varargin,dfs,1);
+if(any(mod(thrs,1)>0)), K=length(thrs); thrs=thrs(:); else
+  K=thrs; thrs=linspace(1/(K+1),1-1/(K+1),K)'; end
+
+% load edges (E) and ground truth (G)
+if(all(ischar(E))), E=double(imread(E))/255; end
+G=load(G); G=G.groundTruth; n=length(G);
+for g=1:n, G{g}=double(G{g}.Boundaries); end
+
+% evaluate edge result at each threshold
+Z=zeros(K,1); cntR=Z; sumR=Z; cntP=Z; sumP=Z;
+if(nargout>=6), V=zeros([size(E) 3 K]); end
+precision_per_threshold_perGT=zeros(K,n);
+recall_per_threshold_perGT=zeros(K,n);
+
+for k = 1:K
+  % threshhold and thin E
+  E1 = double(E>=max(eps,thrs(k)));
+  if(thin), E1=double(bwmorph(E1,'thin',inf)); end
+  % compare to each ground truth in turn and accumualte
+  Z=zeros(size(E)); matchE=Z; matchG=Z; allG=Z;
+  for g = 1:n
+    [matchE1,matchG1] = correspondPixels(E1,G{g},maxDist);
+    matchE = matchE | matchE1>0;
+    matchG = matchG + double(matchG1>0);
+    allG = allG + G{g};
+    matchG_r=double(matchG1>0);
+    matchE1_p=matchE1>0;
+    recall_per_threshold_perGT(k,g)=sum(matchG_r(:))/sum(G{g}(:));
+    precision_per_threshold_perGT(k,g)=nnz(matchE1_p)/nnz(E1);
+    
+
+  end
+  % compute recall (summed over each gt image)
+  cntR(k) = sum(matchG(:)); sumR(k) = sum(allG(:));
+  % compute precision (edges can match any gt image)
+  cntP(k) = nnz(matchE); sumP(k) = nnz(E1);
+  % optinally create visualization of matches
+  if(nargout<6), continue; end; cs=[1 0 0; 0 .7 0; .7 .8 1]; cs=cs-1;
+  FP=E1-matchE; TP=matchE; FN=(allG-matchG)/n;
+  for g=1:3, V(:,:,g,k)=max(0,1+FN*cs(1,g)+TP*cs(2,g)+FP*cs(3,g)); end
+  V(:,2:end,:,k) = min(V(:,2:end,:,k),V(:,1:end-1,:,k));
+  V(2:end,:,:,k) = min(V(2:end,:,:,k),V(1:end-1,:,:,k));
+end
+meanP_perThr=zeros(K,1);
+meanR_perThr=zeros(K,1);
+for k=1:K
+    meanP_perThr(k,1)=sum(precision_per_threshold_perGT(k,:))/n; %mean Precision across all GT per threshold
+    meanR_perThr(k,1)=sum(recall_per_threshold_perGT(k,:))/n; %mean Recall across all GT per threshold
+end
+
+F_perThr=zeros(K,1);
+for k=1:K
+    F_perThr(k,1)=(2*meanP_perThr(k,1)*meanR_perThr(k,1))/(meanP_perThr(k,1)+meanR_perThr(k,1));
+end
+    
+disp(recall_per_threshold_perGT)
+fprintf("\n")
+disp(recall_per_threshold_perGT(1,3))
+fprintf("Hello\n")
+disp(precision_per_threshold_perGT)
+
+% if output file specified write results to disk
+if(isempty(out)), return; end; fid=fopen(out,'w'); assert(fid~=1);
+%fprintf(fid,'%10g , %10g, %10g, %10g, %10g\n',[thrs cntR sumR cntP sumP]');
+fprintf(fid,'Recall');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5, MeanR_perThr,F_perThr');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',k');
+    for g=1:n
+        fprintf(fid,'%10g ,',recall_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'%10g ,',meanR_perThr(k,1)');
+    fprintf(fid,'%10g ', F_perThr(k,1)');
+    fprintf(fid,'\n');
+end
+
+
+fprintf(fid,'\n');
+
+
+fprintf(fid,'Precision');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5, MeanP_perThr');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',k');
+    for g=1:n
+        fprintf(fid,'%10g ,',precision_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'%10g ',meanP_perThr(k,1)');
+    fprintf(fid,'\n');
+end
+
+fprintf(fid,'\n');
+
+
+
+fclose(fid);
+
+end
+%complete
+
+
+function [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg_canny1( G, varargin )
+
+%EE559 ---  HW2_Q1d_1 ---  Hardik Prajapati --- 2678294168 
+%Windows --- matlab2017b 
+%Project: Edges evaluation: (part1) for Canny
+%Arguments to be passed: 1 can be passed as below
+%%edgesEvalImg_canny1( 'HW2_images/Pig_GT.mat', {'out','C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny_score1.csv','thrs',5, 'maxDist',.0075, 'thin',1 })
+%%for canny edge detector
+%@credits: open_source code provided by the TA 
+
+% Calculate edge precision/recall results for single edge image.
+%
+% Enhanced replacement for evaluation_bdry_image() from BSDS500 code:
+%  http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/
+% Uses same format and is fully compatible with evaluation_bdry_image.
+% Given default prms results are *identical* to evaluation_bdry_image.
+%
+% In addition to performing the evaluation, this function can optionally
+% create a visualization of the matches and errors for a given edge result.
+% The visualization of edge matches V has the following color coding:
+%  green=true positive, blue=false positive, red=false negative
+% If multiple ground truth labels are given the false negatives have
+% varying strength (and true positives can match *any* ground truth).
+%
+% This function calls the mex file correspondPixels. Pre-compiled binaries
+% for some systems are provided in /private, source for correspondPixels is
+% available as part of the BSDS500 dataset (see link above). Note:
+% correspondPixels is computationally expensive and very slow in practice.
+%
+% USAGE
+%  [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg( E, G, [prms] )
+%
+% INPUTS
+%  E          - [h x w] edge probability map (may be a filename)
+%  G          - file containing a cell of ground truth boundaries
+%  prms       - parameters (struct or name/value pairs)
+%   .out        - [''] optional output file for writing results
+%   .thrs       - [99] number or vector of thresholds for evaluation
+%   .maxDist    - [.0075] maximum tolerance for edge match
+%   .thin       - [1] if true thin boundary maps
+%
+% OUTPUTS
+%  thrs       - [Kx1] vector of threshold values
+%  cntR,sumR  - [Kx1] ratios give recall per threshold
+%  cntP,sumP  - [Kx1] ratios give precision per threshold
+%  V          - [hxwx3xK] visualization of edge matches
+%
+% EXAMPLE
+%
+% See also edgesEvalDir
+%
+% Structured Edge Detection Toolbox      Version 3.01
+% Code written by Piotr Dollar, 2014.
+% Licensed under the MSR-LA Full Rights License [see license.txt]
+
+% get additional parameters
+dfs={ 'out','', 'thrs',99, 'maxDist',.0075, 'thin',1 };
+[out,thrs,maxDist,thin] = getPrmDflt(varargin,dfs,1);
+if(any(mod(thrs,1)>0)), K=length(thrs); thrs=thrs(:); else
+  K=thrs; thrs=linspace(1/(K+1),1-1/(K+1),K)'; end
+
+% load edges (E) and ground truth (G)
+%if(all(ischar(E))), E=double(imread(E))/255; end
+E{1} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny80_200.jpg');
+E{2} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_200.jpg');
+E{3} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_250.jpg');
+E{4} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_300.jpg');
+E{5} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny130_300.jpg');
+G=load(G); G=G.groundTruth; n=length(G);
+for g=1:n, G{g}=double(G{g}.Boundaries); end
+
+% evaluate edge result at each threshold
+Z=zeros(K,1); cntR=Z; sumR=Z; cntP=Z; sumP=Z;
+if(nargout>=6), V=zeros([size(E) 3 K]); end
+precision_per_threshold_perGT=zeros(K,n);
+recall_per_threshold_perGT=zeros(K,n);
+
+for k = 1:K
+  % threshhold and thin E
+  %E1 = double(E>=max(eps,thrs(k)));
+  E1 = double(1-E{k}/255);
+  if(thin), E1=double(bwmorph(E1,'thin',inf)); end
+  % compare to each ground truth in turn and accumualte
+  Z=zeros(size(E)); matchE=Z; matchG=Z; allG=Z;
+  for g = 1:n
+    [matchE1,matchG1] = correspondPixels(E1,G{g},maxDist);
+    %matchE = matchE | matchE1>0;
+    %matchG = matchG + double(matchG1>0);
+    %allG = allG + G{g};
+    matchG_r=double(matchG1>0);
+    matchE1_p=matchE1>0;
+    recall_per_threshold_perGT(k,g)=sum(matchG_r(:))/sum(G{g}(:));
+    precision_per_threshold_perGT(k,g)=nnz(matchE1_p)/nnz(E1);
+    
+
+  end
+  % compute recall (summed over each gt image)
+  %cntR(k) = sum(matchG(:)); sumR(k) = sum(allG(:));
+  % compute precision (edges can match any gt image)
+  %cntP(k) = nnz(matchE); sumP(k) = nnz(E1);
+  % optinally create visualization of matches
+  %if(nargout<6), continue; end; cs=[1 0 0; 0 .7 0; .7 .8 1]; cs=cs-1;
+  %FP=E1-matchE; TP=matchE; FN=(allG-matchG)/n;
+  %for g=1:3, V(:,:,g,k)=max(0,1+FN*cs(1,g)+TP*cs(2,g)+FP*cs(3,g)); end
+  %V(:,2:end,:,k) = min(V(:,2:end,:,k),V(:,1:end-1,:,k));
+  %V(2:end,:,:,k) = min(V(2:end,:,:,k),V(1:end-1,:,:,k));
+end
+meanP_perGT=zeros(n);
+meanR_perGT=zeros(n);
+for g=1:n
+    meanP_perGT(g)=sum(precision_per_threshold_perGT(:,g))/K; %mean Precision across all all thresholds per GT
+    meanR_perGT(g)=sum(recall_per_threshold_perGT(:,g))/K; %mean Recall across all all thresholds per GT
+end
+overallP=sum(meanP_perGT(:))/n; %Overall Precision, Q1_d_1
+overallR=sum(meanR_perGT(:))/n; %Overall Recall, Q1_d_1
+
+overall_F=(2*overallP*overallR)/(overallP+overallR);
+
+    
+disp(recall_per_threshold_perGT)
+fprintf("\n")
+disp(recall_per_threshold_perGT(1,3))
+fprintf("Hello\n")
+disp(precision_per_threshold_perGT)
+
+% if output file specified write results to disk
+if(isempty(out)), return; end; fid=fopen(out,'w'); assert(fid~=1);
+%fprintf(fid,'%10g , %10g, %10g, %10g, %10g\n',[thrs cntR sumR cntP sumP]');
+fprintf(fid,'Recall');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5 ');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',thrs(k)');
+    for g=1:n
+        fprintf(fid,'%10g ,',recall_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'\n');
+end
+
+fprintf(fid,'MeanR_perGT,');
+for g=1:n
+    fprintf(fid,'%10g ,',meanR_perGT(g)');
+end
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall Recall , %10g ',overallR');
+fprintf(fid,'\n');
+
+fprintf(fid,'Precision');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5 ');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',thrs(k)');
+    for g=1:n
+        fprintf(fid,'%10g ,',precision_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'\n');
+end
+fprintf(fid,'MeanP_perGT,');
+for g=1:n
+    fprintf(fid,'%10g ,',meanP_perGT(g)');
+end
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall Precision , %10g ,',overallP');
+fprintf(fid,'\n');
+
+fprintf(fid,'Overall F_score , %10g ,',overall_F');
+
+
+fclose(fid);
+
+end
+%complete
+
+
+function [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg_canny2( G, varargin )
+
+%EE559 ---  HW2_Q1d_1 ---  Hardik Prajapati --- 2678294168 
+%Windows --- matlab2017b 
+%Project: Edges evaluation: (part2) For canny
+%Arguments to be passed: 1 can be passed as below
+%%edgesEvalImg_canny2( 'HW2_images/Pig_GT.mat', {'out','C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny_score2.csv','thrs',5, 'maxDist',.0075, 'thin',1 })
+%%for canny edge detector
+%@credits: open_source code provided by the TA 
+
+
+% Calculate edge precision/recall results for single edge image.
+%
+% Enhanced replacement for evaluation_bdry_image() from BSDS500 code:
+%  http://www.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/
+% Uses same format and is fully compatible with evaluation_bdry_image.
+% Given default prms results are *identical* to evaluation_bdry_image.
+%
+% In addition to performing the evaluation, this function can optionally
+% create a visualization of the matches and errors for a given edge result.
+% The visualization of edge matches V has the following color coding:
+%  green=true positive, blue=false positive, red=false negative
+% If multiple ground truth labels are given the false negatives have
+% varying strength (and true positives can match *any* ground truth).
+%
+% This function calls the mex file correspondPixels. Pre-compiled binaries
+% for some systems are provided in /private, source for correspondPixels is
+% available as part of the BSDS500 dataset (see link above). Note:
+% correspondPixels is computationally expensive and very slow in practice.
+%
+% USAGE
+%  [thrs,cntR,sumR,cntP,sumP,V] = edgesEvalImg( E, G, [prms] )
+%
+% INPUTS
+%  E          - [h x w] edge probability map (may be a filename)
+%  G          - file containing a cell of ground truth boundaries
+%  prms       - parameters (struct or name/value pairs)
+%   .out        - [''] optional output file for writing results
+%   .thrs       - [99] number or vector of thresholds for evaluation
+%   .maxDist    - [.0075] maximum tolerance for edge match
+%   .thin       - [1] if true thin boundary maps
+%
+% OUTPUTS
+%  thrs       - [Kx1] vector of threshold values
+%  cntR,sumR  - [Kx1] ratios give recall per threshold
+%  cntP,sumP  - [Kx1] ratios give precision per threshold
+%  V          - [hxwx3xK] visualization of edge matches
+%
+% EXAMPLE
+%
+% See also edgesEvalDir
+%
+% Structured Edge Detection Toolbox      Version 3.01
+% Code written by Piotr Dollar, 2014.
+% Licensed under the MSR-LA Full Rights License [see license.txt]
+
+% get additional parameters
+dfs={ 'out','', 'thrs',99, 'maxDist',.0075, 'thin',1 };
+[out,thrs,maxDist,thin] = getPrmDflt(varargin,dfs,1);
+if(any(mod(thrs,1)>0)), K=length(thrs); thrs=thrs(:); else
+  K=thrs; thrs=linspace(1/(K+1),1-1/(K+1),K)'; end
+
+% load edges (E) and ground truth (G)
+%if(all(ischar(E))), E=double(imread(E))/255; end
+E{1} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny80_200.jpg');
+E{2} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_200.jpg');
+E{3} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_250.jpg');
+E{4} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny100_300.jpg');
+E{5} = imread('C:\Users\hp631\OneDrive\Documents\MATLAB\USC\HW2_results_matlab\pig_canny130_300.jpg');
+G=load(G); G=G.groundTruth; n=length(G);
+for g=1:n, G{g}=double(G{g}.Boundaries); end
+
+% evaluate edge result at each threshold
+Z=zeros(K,1); cntR=Z; sumR=Z; cntP=Z; sumP=Z;
+if(nargout>=6), V=zeros([size(E) 3 K]); end
+precision_per_threshold_perGT=zeros(K,n);
+recall_per_threshold_perGT=zeros(K,n);
+
+for k = 1:K
+  % threshhold and thin E
+  %E1 = double(E>=max(eps,thrs(k)));
+  E1 = double(1-E{k}/255);
+  if(thin), E1=double(bwmorph(E1,'thin',inf)); end
+  % compare to each ground truth in turn and accumualte
+  Z=zeros(size(E)); matchE=Z; matchG=Z; allG=Z;
+  for g = 1:n
+    [matchE1,matchG1] = correspondPixels(E1,G{g},maxDist);
+    %matchE = matchE | matchE1>0;
+    %matchG = matchG + double(matchG1>0);
+    %allG = allG + G{g};
+    matchG_r=double(matchG1>0);
+    matchE1_p=matchE1>0;
+    recall_per_threshold_perGT(k,g)=sum(matchG_r(:))/sum(G{g}(:));
+    precision_per_threshold_perGT(k,g)=nnz(matchE1_p)/nnz(E1);
+    
+
+  end
+  % compute recall (summed over each gt image)
+  %cntR(k) = sum(matchG(:)); sumR(k) = sum(allG(:));
+  % compute precision (edges can match any gt image)
+  %cntP(k) = nnz(matchE); sumP(k) = nnz(E1);
+  % optinally create visualization of matches
+  %if(nargout<6), continue; end; cs=[1 0 0; 0 .7 0; .7 .8 1]; cs=cs-1;
+  %FP=E1-matchE; TP=matchE; FN=(allG-matchG)/n;
+  %for g=1:3, V(:,:,g,k)=max(0,1+FN*cs(1,g)+TP*cs(2,g)+FP*cs(3,g)); end
+  %V(:,2:end,:,k) = min(V(:,2:end,:,k),V(:,1:end-1,:,k));
+  %V(2:end,:,:,k) = min(V(2:end,:,:,k),V(1:end-1,:,:,k));
+end
+meanP_perThr=zeros(K,1);
+meanR_perThr=zeros(K,1);
+for k=1:K
+    meanP_perThr(k,1)=sum(precision_per_threshold_perGT(k,:))/n; %mean Precision across all GT per threshold
+    meanR_perThr(k,1)=sum(recall_per_threshold_perGT(k,:))/n; %mean Recall across all GT per threshold
+end
+
+F_perThr=zeros(K,1);
+for k=1:K
+    F_perThr(k,1)=(2*meanP_perThr(k,1)*meanR_perThr(k,1))/(meanP_perThr(k,1)+meanR_perThr(k,1));
+end
+    
+disp(recall_per_threshold_perGT)
+fprintf("\n")
+disp(recall_per_threshold_perGT(1,3))
+fprintf("Hello\n")
+disp(precision_per_threshold_perGT)
+
+% if output file specified write results to disk
+if(isempty(out)), return; end; fid=fopen(out,'w'); assert(fid~=1);
+%fprintf(fid,'%10g , %10g, %10g, %10g, %10g\n',[thrs cntR sumR cntP sumP]');
+fprintf(fid,'Recall');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5, MeanR_perThr,F_perThr');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',thrs(k)');
+    for g=1:n
+        fprintf(fid,'%10g ,',recall_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'%10g ,',meanR_perThr(k,1)');
+    fprintf(fid,'%10g ', F_perThr(k,1)');
+    fprintf(fid,'\n');
+end
+
+
+fprintf(fid,'\n');
+
+
+fprintf(fid,'Precision');
+fprintf(fid,'\n');
+
+fprintf(fid,' , GT1, GT2, GT3, GT4, GT5, MeanP_perThr');
+fprintf(fid,'\n');
+
+for k=1:K
+    fprintf(fid,'TH_%10g ,',thrs(k)');
+    for g=1:n
+        fprintf(fid,'%10g ,',precision_per_threshold_perGT(k,g)');
+    end
+    fprintf(fid,'%10g ',meanP_perThr(k,1)');
+    fprintf(fid,'\n');
+end
+
+fprintf(fid,'\n');
+
+
+
+fclose(fid);
+
+end
+%complete
+
+
+
+//ee569 ---  HW2_Q2a_1 ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Fixed Threshold based Dithering
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+int main(int argc, char *argv[]){
+    const int Size_x=400; //height
+    const int Size_y=600; //width
+    const int Bpp=1; //grayscale
+
+    //Allocate dynamic memory for input image container
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+    
+    int threshold=200; //threshold value
+
+    //Allocate dynamic memory for output image container
+    unsigned char *output=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    for (int i=0;i<Size_x*Size_y;i++){
+        if (*(Imagedata+i)<threshold){
+            *(output+i)=0;
+        }
+        else{
+            *(output+i)=255;
+        }
+    }
+
+    write(argv[2],output,1,Size_x,Size_y);
+
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+
+
+//EE569 ---  HW2_Q2a_2 ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Random Threshold based Dithering
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+
+
+int main(int argc, char *argv[]){
+    const int Size_x=400; //height
+    const int Size_y=600; //width
+    const int Bpp=1; //grayscale
+
+    //Allocate dynamic memory for input image container
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+    
+    //Initialize the random generator 
+    srand(time(0));
+    int threshold=0;
+
+    //Allocate dynamic memory for output image container
+    unsigned char *output=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    for (int i=0;i<Size_x*Size_y;i++){
+        threshold=rand()%255;
+        if (*(Imagedata+i)<threshold){
+            *(output+i)=0;
+        }
+        else{
+            *(output+i)=255;
+        }
+    }
+
+    write(argv[2],output,1,Size_x,Size_y);
+
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+    
+
+//EE569 ---  HW2_Q2a_3 ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Dithering Matrix based Dithering
+//Arguments to be passed: 4
+    //1) Input image file(raw)
+    //2) Output_d2x2 image file(raw)
+    //3) Output_d8x8 image file(raw)
+    //4) Output_d32x32 image file(raw)
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+
+void index_mat(int *mat_holder,int N,int *prev_mat){
+    int row_idx=0;
+    int col_idx=0;
+    for (int i=0;i<N;i++){
+        row_idx=i%(N/2);
+        for (int j=0;j<N;j++){
+            col_idx=j%(N/2);
+            if(i<(N/2) && j<(N/2)){
+               *(mat_holder+i*N+j)=*(prev_mat+row_idx*(N/2)+col_idx)*4+1; 
+            }
+            else if (i<(N/2) && j>=(N/2)){
+                *(mat_holder+i*N+j)=*(prev_mat+row_idx*(N/2)+col_idx)*4+2;
+            }
+            else if (i>=(N/2) && j<(N/2)){
+                *(mat_holder+i*N+j)=*(prev_mat+row_idx*(N/2)+col_idx)*4+3;
+            }
+            else {
+                *(mat_holder+i*N+j)=*(prev_mat+row_idx*(N/2)+col_idx)*4+0;
+            }
+        }
+    }
+    
+    //print out the Index matrix
+    cout<<endl;
+    cout<<"Index Matrix I_"<<N<<":"<<endl;
+    for (int i=0;i<N;i++){
+        for (int j=0;j<N;j++){
+            cout<<*(mat_holder+i*N+j)<<' ';
+        }
+        cout<<endl;
+    }
+}
+
+void Dithering(unsigned char *input_img,unsigned char *output_img,int *index_mat,int *thr_mat,int size_x,int size_y,int N){
+    int threshold;
+    for (int i=0;i<N;i++){
+        for (int j=0;j<N;j++){
+            *(thr_mat+i*N+j)=(int)(((*(index_mat+i*N+j)+0.5)/(N*N))*255);
+        }
+    }
+    for (int i=0;i<size_x;i++){
+        for (int j=0;j<size_y;j++){
+            threshold=*(thr_mat+(i%N)*N+(j%N));
+            if(*(input_img+i*size_y+j)<=threshold){
+                *(output_img+i*size_y+j)=0;
+            }
+            else{
+                *(output_img+i*size_y+j)=255;
+            }
+        }
+    }
+    //print out the Index matrix
+    cout<<endl;
+    cout<<"Threshold Matrix I_"<<N<<":"<<endl;
+    for (int i=0;i<N;i++){
+        for (int j=0;j<N;j++){
+            cout<<*(thr_mat+i*N+j)<<' ';
+        }
+        cout<<endl;
+    }
+}
+
+const int I_2[2][2]={
+    {1,2},
+    {3,0}
+};
+
+int main(int argc, char *argv[]){
+    const int Size_x=400; //height
+    const int Size_y=600; //width
+    const int Bpp=1; //grayscale
+
+    //Allocate dynamic memory for input image container
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+
+    //Allocate dynamic memory for I_2 index mat container
+    int *I2=new (nothrow) int [2*2];
+    for (int i=0;i<2;i++){
+        for (int j=0;j<2;j++){
+            *(I2+i*2+j)=I_2[i][j];
+        }
+    }
+    
+    //Allocate dynamic memory for I4 index mat container
+    int *I4=new (nothrow) int [4*4];
+    index_mat(I4,4,I2);
+
+    //Allocate dynamic memory for I8 index mat container
+    int *I8=new (nothrow) int [8*8];
+    index_mat(I8,8,I4);
+
+    //deleting I4
+    delete[] I4;
+
+    //Allocate dynamic memory for I16 index mat container
+    int *I16=new (nothrow) int [16*16];
+    index_mat(I16,16,I8);
+
+    //Allocate dynamic memory for I32 index mat container
+    int *I32=new (nothrow) int [32*32];
+    index_mat(I32,32,I16);
+
+    //deleting I16
+    delete[] I16;
+
+    //Allocate dynamic memory for output_2 image container
+    unsigned char *Output_2=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    //Allocate dynamic memory for Thr_2 index mat container
+    int *Thr2=new (nothrow) int [2*2];
+    //call Dithering function to generate output for I_2 
+    Dithering(Imagedata,Output_2,I2,Thr2,Size_x,Size_y,2);
+    //write the output_2 file 
+    write(argv[2],Output_2,1,Size_x,Size_y);
+    //deleting Thr2 and Output_2
+    delete[] Thr2;
+    delete[] Output_2;
+
+    //Allocate dynamic memory for output_8 image container
+    unsigned char *Output_8=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    //Allocate dynamic memory for Thr_8 index mat container
+    int *Thr8=new (nothrow) int [8*8];
+    //call Dithering function to generate output for I_8 
+    Dithering(Imagedata,Output_8,I8,Thr8,Size_x,Size_y,8);
+    //write the output_8 file 
+    write(argv[3],Output_8,1,Size_x,Size_y);
+    //deleting Thr8 and Output_8
+    delete[] Thr8;
+    delete[] Output_8;
+
+
+    //Allocate dynamic memory for output_32 image container
+    unsigned char *Output_32=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    //Allocate dynamic memory for Thr_32 index mat container
+    int *Thr32=new (nothrow) int [32*32];
+    //call Dithering function to generate output for I_32 
+    Dithering(Imagedata,Output_32,I32,Thr32,Size_x,Size_y,32);
+    //write the output_32 file 
+    write(argv[4],Output_32,1,Size_x,Size_y);
+
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+
+
+//EE569 ---  HW2_Q2b ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Half-toned by Error Diffusion (FS, JNN, Stucki)
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+//To run either of the 3(Fs, JNN, Stucki) algorithms, make 3 changes: 1) divisor 2) H-matrix 3) filter size
+//eg. FS: divisor = 16; experiment(f_hat,output,*floyd,*floyd_ref,Size_x,Size_y,3,128,divisor);
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+double floyd[3][3]={
+    {0,0,0},
+    {0,0,7},
+    {3,5,1}
+};
+
+double floyd_ref[3][3]={
+    {0,0,0},
+    {7,0,0},
+    {1,5,3}
+};
+
+double jjn[5][5]={
+    {0,0,0,0,0},
+    {0,0,0,0,0},
+    {0,0,0,7,5},
+    {3,5,7,5,3},
+    {1,3,5,3,1}
+};
+
+double jjn_ref[5][5]={
+    {0,0,0,0,0},
+    {0,0,0,0,0},
+    {5,7,0,0,0},
+    {3,5,7,5,3},
+    {1,3,5,3,1}
+};
+
+double stucki[5][5]={
+    {0,0,0,0,0},
+    {0,0,0,0,0},
+    {0,0,0,8,4},
+    {2,4,8,4,2},
+    {1,2,4,2,1}
+};
+
+double stucki_ref[5][5]={
+    {0,0,0,0,0},
+    {0,0,0,0,0},
+    {4,8,0,0,0},
+    {2,4,8,4,2},
+    {1,2,4,2,1}
+};
+
+void binarize(unsigned char *Binarized_mat,double *F_hat_mat,int size_x,int size_y,int threshold){
+    for (int i=0;i<size_x;i++){
+        for (int j=0;j<size_y;j++){
+            if(*(F_hat_mat+i*size_y+j)>threshold){
+                *(Binarized_mat+i*size_y+j)=255;
+            }
+            else{
+                *(Binarized_mat+i*size_y+j)=0;
+            }
+        }
+    }
+}
+
+int bin_flag(double pixel,int threshold){
+    int flag=0;
+    if (pixel>threshold){
+        flag=255;
+    }
+    else{
+        flag=0;
+    }
+    return flag;
+}
+
+void error_defusion(double *F_hat,double error,int idx_r,int idx_c,double *h_mat,int Size_filter,int size_x,int size_y,double divisor){
+    int filter_x=0;
+    int filter_y=0;
+    //if ((idx_r%2==1 && (((Size_filter-1)/2))%2==1) || (idx_r%2==0 && (((Size_filter-1)/2))%2==0)){ //left to right
+    for (int i=idx_r-((Size_filter-1)/2);i<idx_r-((Size_filter-1)/2)+Size_filter;i++){
+        for (int j=idx_c-((Size_filter-1)/2);j<idx_c-((Size_filter-1)/2)+Size_filter;j++){
+            *(F_hat+i*size_y+j)=*(F_hat+i*size_y+j) + (error*(*(h_mat+filter_x*Size_filter+filter_y)))/divisor;
+            filter_y=filter_y+1; 
+        }
+        filter_y=0;
+        filter_x=filter_x+1;
+    }
+}
+
+void experiment(double *f_hat, unsigned char *binary_mat,double *h_mat,double *h_mat_mirror,int size_x,int size_y,int filter_size,int threshold_val,double divisor){
+    double error=0;
+    int b_pxl=0;
+    for (int i=(filter_size-1)/2;i<size_x-((filter_size-1)/2);i++){
+        if ((i%2==1 && (((filter_size-1)/2))%2==1) || (i%2==0 && (((filter_size-1)/2))%2==0)){ //left to right
+            for (int j=(filter_size-1)/2;j<size_y-((filter_size-1)/2);j++){
+                //binarize(binary_mat,f_hat,size_x,size_y,threshold_val);
+                b_pxl=bin_flag(*(f_hat+i*size_y+j),threshold_val);
+                error=*(f_hat+i*size_y+j) - (double)b_pxl;
+                error_defusion(f_hat,error,i,j,h_mat,filter_size,size_x,size_y,divisor);
+            }
+        }
+        else{ //right to left
+            for(int j=size_y-((filter_size-1)/2);j>=(filter_size-1)/2;j--){
+                //binarize(binary_mat,f_hat,size_x,size_y,threshold_val);
+                b_pxl=bin_flag(*(f_hat+i*size_y+j),threshold_val);
+                error=*(f_hat+i*size_y+j) - (double)b_pxl;
+                //error=*(f_hat+i*size_y+j) - (*(binary_mat+i*size_y+j));
+                error_defusion(f_hat,error,i,j,h_mat_mirror,filter_size,size_x,size_y,divisor);
+            }
+        }
+    }
+    binarize(binary_mat,f_hat,size_x,size_y,threshold_val); //final binarization
+}
+
+
+int main(int argc, char *argv[]){
+    const int Size_x=400; //height
+    const int Size_y=600; //width
+    const int Bpp=1; //grayscale
+
+    // for (int i=0;i<3;i++){
+    //     for (int j=0;j<3;j++){
+    //         cout<<floyd[i][j]<<",";
+    //     }
+    //     cout<<endl;
+    // }
+
+    //Allocate dynamic memory for input image container & initialize f_hat=input image
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+    
+    //Allocate dynamic memory for f_hat & initialize f_hat=input image
+    double *f_hat=new (nothrow) double [Size_x*Size_y*Bpp];
+    for (int i=0;i<Size_x;i++){
+        for (int j=0;j<Size_y;j++){
+            *(f_hat+i*Size_y+j)=*(Imagedata+i*Size_y+j);
+        }
+    }
+
+    //Allocate dynamic memory for output image container
+    unsigned char *output=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+
+    //run the experiment for specified argument
+    double divisor=42;
+    experiment(f_hat,output,*stucki,*stucki_ref,Size_x,Size_y,5,128,divisor);
+
+    //write the final output image of the experiment
+    write(argv[2],output,1,Size_x,Size_y);
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+    //EE569 ---  HW3_a ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Color-Half Toning with separable Error Diffusion
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+double floyd[3][3]={
+    {0,0,0},
+    {0,0,7},
+    {3,5,1}
+};
+
+double floyd_ref[3][3]={
+    {0,0,0},
+    {7,0,0},
+    {1,5,3}
+};
+
+void binarize(unsigned char *Binarized_mat,double *F_hat_mat,int size_x,int size_y,int threshold){
+    for (int i=0;i<size_x;i++){
+        for (int j=0;j<size_y;j++){
+            if(*(F_hat_mat+i*size_y+j)>threshold){
+                *(Binarized_mat+i*size_y+j)=255;
+            }
+            else{
+                *(Binarized_mat+i*size_y+j)=0;
+            }
+        }
+    }
+}
+
+int bin_flag(double pixel,int threshold){
+    int flag=0;
+    if (pixel>threshold){
+        flag=255;
+    }
+    else{
+        flag=0;
+    }
+    return flag;
+}
+
+void error_defusion(double *F_hat,double error,int idx_r,int idx_c,double *h_mat,int Size_filter,int size_x,int size_y,double divisor){
+    int filter_x=0;
+    int filter_y=0;
+    //if ((idx_r%2==1 && (((Size_filter-1)/2))%2==1) || (idx_r%2==0 && (((Size_filter-1)/2))%2==0)){ //left to right
+    for (int i=idx_r-((Size_filter-1)/2);i<idx_r-((Size_filter-1)/2)+Size_filter;i++){
+        for (int j=idx_c-((Size_filter-1)/2);j<idx_c-((Size_filter-1)/2)+Size_filter;j++){
+            *(F_hat+i*size_y+j)=*(F_hat+i*size_y+j) + (error*(*(h_mat+filter_x*Size_filter+filter_y)))/divisor;
+            filter_y=filter_y+1; 
+        }
+        filter_y=0;
+        filter_x=filter_x+1;
+    }
+}
+
+void experiment(double *f_hat, unsigned char *binary_mat,double *h_mat,double *h_mat_mirror,int size_x,int size_y,int filter_size,int threshold_val,double divisor){
+    double error=0;
+    int b_pxl=0;
+    for (int i=(filter_size-1)/2;i<size_x-((filter_size-1)/2);i++){
+        if ((i%2==1 && (((filter_size-1)/2))%2==1) || (i%2==0 && (((filter_size-1)/2))%2==0)){ //left to right
+            for (int j=(filter_size-1)/2;j<size_y-((filter_size-1)/2);j++){
+                //binarize(binary_mat,f_hat,size_x,size_y,threshold_val);
+                b_pxl=bin_flag(*(f_hat+i*size_y+j),threshold_val);
+                error=*(f_hat+i*size_y+j) - (double)b_pxl;
+                error_defusion(f_hat,error,i,j,h_mat,filter_size,size_x,size_y,divisor);
+            }
+        }
+        else{ //right to left
+            for(int j=size_y-((filter_size-1)/2);j>=(filter_size-1)/2;j--){
+                //binarize(binary_mat,f_hat,size_x,size_y,threshold_val);
+                b_pxl=bin_flag(*(f_hat+i*size_y+j),threshold_val);
+                error=*(f_hat+i*size_y+j) - (double)b_pxl;
+                //error=*(f_hat+i*size_y+j) - (*(binary_mat+i*size_y+j));
+                error_defusion(f_hat,error,i,j,h_mat_mirror,filter_size,size_x,size_y,divisor);
+            }
+        }
+    }
+    binarize(binary_mat,f_hat,size_x,size_y,threshold_val); //final binarization
+}
+
+void channel_sep(double *f_hat,unsigned char *input_image,int size_x,int size_y,int channel){
+    int grayscale_idx=0;
+    for (int i=0+channel;i<size_x*size_y*3;i++){
+        *(f_hat+grayscale_idx)=255.0-*(input_image+i);
+        grayscale_idx=grayscale_idx+1;
+        i=i+2;
+    }
+}
+
+void channel_stack(unsigned char *output_channel,unsigned char *output_image,int size_x,int size_y,int channel){
+    int grayscale_idx=0;
+    for (int i=0+channel;i<size_x*size_y*3;i++){
+        *(output_image+i)=255.0-*(output_channel+grayscale_idx);
+        grayscale_idx=grayscale_idx+1;
+        i=i+2;
+    }
+}
+
+int main(int argc, char *argv[]){
+    const int Size_x=375; //height
+    const int Size_y=500; //width
+    const int Bpp=3; //rgb
+
+    //Allocate dynamic memory for input image container & initialize f_hat=input image
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+
+    //Allocate dynamic memory for ooutput image container 
+    unsigned char *Output_rgb=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    
+    //Allocate dynamic memory for channel wise output container
+    unsigned char *output_chn=new (nothrow) unsigned char [Size_x*Size_y];
+
+    //Allocate dynamic memory for f_hat 
+    double *f_hat=new (nothrow) double [Size_x*Size_y];
+    
+    double divisor=16; 
+
+    for (int i=0;i<3;i++){
+        //separate the channel, convert to CMY space & initialize f_hat=255-input image
+        channel_sep(f_hat,Imagedata,Size_x,Size_y,i); 
+        //run the experiment channel wise
+        experiment(f_hat,output_chn,*floyd,*floyd_ref,Size_x,Size_y,3,128,divisor);
+        //copy the binarized matrix (channel wise) to the final output image.
+        channel_stack(output_chn,Output_rgb, Size_x,Size_y,i);
+    }
+    //write the final output rgb image of the experiment
+    write(argv[2],Output_rgb,3,Size_x,Size_y);
+
+    cout<<"complete"<<endl;
+    return 0;
+}
+
+
+//EE569 ---  HW3_b ---  Hardik Prajapati --- 2678294168 
+//Windows --- Visual Studio --- g++ compiler 
+//Project: Color-Half Toning with MVBQ based Error Diffusion(FS)
+//Arguments to be passed: 2
+    //1) Input image file(raw)
+    //2) Output image file(raw)
+
+#include <stdio.h>
+#include <iostream>
+#include <stdlib.h>
+#include <cmath>
+#define  _CRT_SECURE_NO_WARNINGS 
+#include <string.h>
+#include <fstream>
+using namespace std;
+
+
+void read(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"rb"))) {
+		cout << "Cannot open file: " << filename <<endl;
+		exit(1);
+	}
+	fread(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+void write(const char *filename,void *image_mat, int bpp, int size_x, int size_y){
+    FILE *file;
+    if (!(file=fopen(filename,"wb"))) {
+		cout << "Cannot open file: " << filename << endl;
+		exit(1);
+	}
+	fwrite(image_mat, sizeof(unsigned char), size_x*size_y*bpp, file);
+	fclose(file);
+}
+
+double floyd[3][3]={
+    {0,0,0},
+    {0,0,7},
+    {3,5,1}
+};
+
+double floyd_ref[3][3]={
+    {0,0,0},
+    {7,0,0},
+    {1,5,3}
+};
+
+
+void error_defusion(double *F_hat,double error,int idx_r,int idx_c,double *h_mat,int Size_filter,int size_x,int size_y,double divisor){
+    int filter_x=0;
+    int filter_y=0;
+    for (int i=idx_r-((Size_filter-1)/2);i<idx_r-((Size_filter-1)/2)+Size_filter;i++){
+        for (int j=idx_c-((Size_filter-1)/2);j<idx_c-((Size_filter-1)/2)+Size_filter;j++){
+            *(F_hat+i*size_y+j)=*(F_hat+i*size_y+j) + (error*(*(h_mat+filter_x*Size_filter+filter_y)))/divisor;
+            filter_y=filter_y+1; 
+        }
+        filter_y=0;
+        filter_x=filter_x+1;
+    }
+}
+
+void nearest_vertex(int quadrant,double *f_hat_r,double *f_hat_g,double *f_hat_b,unsigned char *output_img,int idx,int cnt){
+    //CMYW-1, MYGC-2, RGMY-3, KRGB-4, RGBM-5, CMGB-6
+    string vertex;
+    double normalize=255;
+    double R=*(f_hat_r+cnt)/normalize;
+    double G=*(f_hat_g+cnt)/normalize;
+    double B=*(f_hat_b+cnt)/normalize;
+    //CMYW
+    if (quadrant == 1){
+        vertex = "white";
+        if (B < 0.5){
+            if (B <= R){
+                if (B <= G){
+                    vertex = "yellow";
+                }
+            }
+        }
+        if (G < 0.5){
+            if (G <= B){
+                if (G <= R){
+                    vertex = "magenta";
+                }
+            }
+        }
+        if (R < 0.5){
+            if (R <= B){
+                if (R <= G){
+                    vertex = "cyan";
+                }
+            }
+        }
+    }
+
+
+    // No.2 for MYGC
+    if (quadrant == 2){
+        vertex = "magenta"; 
+        if (G >= B){
+            if (R >= B){
+                if (R >= 0.5){
+                    vertex = "yellow";
+                }
+                else{
+                    vertex = "green";
+                }
+            }
+        }
+        if (G >= R){
+            if (B >= R){
+                if (B >= 0.5){
+                    vertex = "cyan"; 
+                }
+                else{
+                    vertex = "green";
+                }
+            }
+        }
+    }
+
+
+    // No.3 for RGMY
+    if (quadrant == 3){
+        if (B > 0.5){
+            if (R > 0.5){
+                if (B >= G){
+                    vertex = "magenta";
+                }
+                else{
+                    vertex = "yellow";
+                }
+            }
+            else{
+                if (G > B + R){
+                    vertex = "green";
+                }
+                else{ 
+                    vertex = "magenta";
+                }
+            }
+        }
+        else{
+            if (R >= 0.5){
+                if (G >= 0.5){
+                    vertex = "yellow";
+                }
+                else{
+                    vertex = "red";
+                }
+            }
+            else{
+                if (R >= G){
+                    vertex = "red";
+                }
+                else{
+                    vertex = "green";
+                }
+            }
+        }
+    }
+
+
+    //No.4 for KRGB
+    if (quadrant == 4){
+        vertex = "black";
+        if (B > 0.5){
+            if (B >= R){
+                if (B >= G){
+                    vertex = "blue";
+                }
+            }
+        }
+        if (G > 0.5){
+            if (G >= B){
+                if (G >= R){
+                    vertex = "green";
+                }
+            }
+        }
+        if (R > 0.5){
+            if (R >= B){
+                if (R >= G){
+                    vertex = "red";
+                }
+            }
+        }
+    }
+
+
+    // No.5 for RGBM
+    if (quadrant == 5){
+        vertex = "green";
+        if (R > G){
+            if (R >= B){
+                if (B < 0.5){
+                    vertex = "red";
+                }
+                else{
+                    vertex = "magenta";
+                }
+            }
+        }
+        if (B > G){
+            if (B >= R){
+                if (R < 0.5){
+                    vertex = "blue";
+                }
+                else{
+                    vertex = "magenta";
+                }
+            }
+        }
+    }
+
+
+    // No.6 for CMGB
+    if (quadrant == 6){
+        if (B > 0.5){
+            if ( R > 0.5){
+                if (G >= R){
+                    vertex = "cyan";
+                }
+                else{
+                    vertex = "magenta";
+                }
+            }
+            else{
+                if (G > 0.5){
+                    vertex = "cyan";
+                }
+                else{
+                    vertex = "blue";
+                }
+            }
+        }
+        else{
+            if ( R > 0.5){
+                if (R - G + B >= 0.5){
+                    vertex = "magenta";
+                }
+                else{
+                    vertex = "green";
+                }
+            }
+            else{
+                if (G >= B){
+                    vertex = "green";
+                }
+                else{
+                    vertex = "blue";
+                }
+            }
+        }
+    }
+    if (vertex=="red"){
+        *(output_img+idx)=255;
+        *(output_img+idx+1)=0;
+        *(output_img+idx+2)=0;
+    }
+    else if (vertex=="green"){
+        *(output_img+idx)=0;
+        *(output_img+idx+1)=255;
+        *(output_img+idx+2)=0;
+    }
+    else if (vertex=="blue"){
+        *(output_img+idx)=0;
+        *(output_img+idx+1)=0;
+        *(output_img+idx+2)=255;
+    }
+    else if (vertex=="cyan"){
+        *(output_img+idx)=0;
+        *(output_img+idx+1)=255;
+        *(output_img+idx+2)=255;
+    }
+    else if (vertex=="magenta"){
+        *(output_img+idx)=255;
+        *(output_img+idx+1)=0;
+        *(output_img+idx+2)=255;
+    }
+    else if (vertex=="yellow"){
+        *(output_img+idx)=255;
+        *(output_img+idx+1)=255;
+        *(output_img+idx+2)=0;
+    }
+    else if (vertex=="white"){
+        *(output_img+idx)=255;
+        *(output_img+idx+1)=255;
+        *(output_img+idx+2)=255;
+    }
+}
+
+int MBVQ_quadruple(unsigned char *original_image, int idx){
+    int output=0; //CMYW-1, MYGC-2, RGMY-3, KRGB-4, RGBM-5, CMGB-6
+    if (*(original_image+idx)+*(original_image+idx+1)>255){
+        if(*(original_image+idx+1)+*(original_image+idx+2)>255){
+            if(*(original_image+idx)+*(original_image+idx+1)+*(original_image+idx+2)>510){
+                output=1; //CMYW
+            }
+            else{
+                output=2; //MYGC
+            }
+        }
+        else{
+            output=3; //RGMY
+        }
+    }
+    else{
+        if (!((*(original_image+idx+1)+*(original_image+idx+2))>255)){
+            if(!((*(original_image+idx)+*(original_image+idx+1)+*(original_image+idx+2))>255)){
+                output=4; //KRGB
+            }
+            else{
+                output=5; //RGBM
+            }
+        }
+        else{
+            output=6; //CMGB
+        }
+    }
+    return output;
+}
+
+void channel_sep(double *f_hat,unsigned char *input_image,int size_x,int size_y,int channel){
+    int grayscale_idx=0;
+    for (int i=0+channel;i<size_x*size_y*3;i++){
+        *(f_hat+grayscale_idx)=*(input_image+i);
+        grayscale_idx=grayscale_idx+1;
+        i=i+2;
+    }
+}
+
+void boundary_px(unsigned char *input_img,double *f_hat_r,double *f_hat_g,double *f_hat_b,unsigned char *output_img,int rows,int cols){
+    //first row
+    int quad=0;
+    int cnt=0;
+    for (int i=0;i<cols*3;i++){
+        quad=MBVQ_quadruple(input_img,i);
+        nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,i,cnt);
+        i=i+2;
+        cnt=cnt+1;
+    }
+
+    //first col
+    cnt=0;
+    for (int i=cols*3;i<rows*cols*3;i++){
+        quad=MBVQ_quadruple(input_img,i);
+        nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,i,cnt);
+        i=(i-1)+3*cols;
+        cnt=cnt+1;
+    }
+
+    //last col
+    cnt=0;
+    for (int i=(cols-1)*3;i<rows*cols*3;i++){
+        quad=MBVQ_quadruple(input_img,i);
+        nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,i,cnt);
+        i=(i-1)+3*cols;
+        cnt=cnt+1;
+    }
+
+    //last row
+    cnt=0;
+    for (int i=(rows-1)*(cols*3)+1;i<rows*cols*3-3;i++){
+        quad=MBVQ_quadruple(input_img,i);
+        nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,i,cnt);
+        i=i+2;
+        cnt=cnt+1;
+    }
+}
+
+void MBVQ_experiment(unsigned char *input_img, unsigned char *output_img,double *h_mat,double *h_mat_r,double *f_hat_r, double *f_hat_g,double *f_hat_b,int size_x, int size_y, int filter_size,double divisor){
+    //separate rgb channel
+    channel_sep(f_hat_r,input_img,size_x,size_y,0);
+    channel_sep(f_hat_g,input_img,size_x,size_y,1);
+    channel_sep(f_hat_b,input_img,size_x,size_y,2);
+
+
+    //quantize the boundary pixels
+    boundary_px(input_img,f_hat_r,f_hat_g,f_hat_b,output_img,size_x,size_y);
+
+    //iterate over each pixel and do serpentine scanning
+    int cnt=0;
+    int idx=0;
+    int quad=0;
+    double err_r=0;
+    double err_g=0;
+    double err_b=0;
+    for (int i=(filter_size-1)/2;i<size_x-((filter_size-1)/2);i++){
+        if ((i%2==1 && (((filter_size-1)/2))%2==1) || (i%2==0 && (((filter_size-1)/2))%2==0)){ //left to right
+            for (int j=(filter_size-1)/2;j<size_y-((filter_size-1)/2);j++){
+                cnt=i*size_y+j;
+                idx=cnt*3;
+                //find the quadruple based on RGB value of input image
+                quad=MBVQ_quadruple(input_img,idx);
+                //find nearest vertex based on updated RGB value: RGB+error
+                nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,idx,cnt);
+                err_r=*(f_hat_r+cnt)-(double)*(output_img+idx);
+                err_g=*(f_hat_g+cnt)-(double)*(output_img+idx+1);
+                err_b=*(f_hat_b+cnt)-(double)*(output_img+idx+2);
+                //diffuse the error to future pixels
+                error_defusion(f_hat_r,err_r,i,j,h_mat,filter_size,size_x,size_y,divisor);
+                error_defusion(f_hat_g,err_g,i,j,h_mat,filter_size,size_x,size_y,divisor);
+                error_defusion(f_hat_b,err_b,i,j,h_mat,filter_size,size_x,size_y,divisor);
+            }
+        }
+        else{ //right to left
+            for(int j=size_y-((filter_size-1)/2)-1;j>=(filter_size-1)/2;j--){
+                cnt=i*size_y+j;
+                idx=cnt*3;
+                //find the quadruple based on RGB value of input image
+                quad=MBVQ_quadruple(input_img,idx);
+                //find nearest vertex based on updated RGB value: RGB+error
+                nearest_vertex(quad,f_hat_r,f_hat_g,f_hat_b,output_img,idx,cnt);
+                err_r=*(f_hat_r+cnt)-(double)*(output_img+idx);
+                err_g=*(f_hat_g+cnt)-(double)*(output_img+idx+1);
+                err_b=*(f_hat_b+cnt)-(double)*(output_img+idx+2);
+                //diffuse the error to future pixels
+                error_defusion(f_hat_r,err_r,i,j,h_mat_r,filter_size,size_x,size_y,divisor);
+                error_defusion(f_hat_g,err_g,i,j,h_mat_r,filter_size,size_x,size_y,divisor);
+                error_defusion(f_hat_b,err_b,i,j,h_mat_r,filter_size,size_x,size_y,divisor);
+            }
+        }
+    }
+}
+
+int main(int argc, char *argv[]){
+    const int Size_x=375; //height
+    const int Size_y=500; //width
+    const int Bpp=3; //rgb
+
+    //Allocate dynamic memory for input image container & initialize f_hat=input image
+    unsigned char *Imagedata=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+    read(argv[1],Imagedata,Bpp,Size_x,Size_y);
+
+    //Allocate dynamic memory for output image container 
+    unsigned char *Output_rgb=new (nothrow) unsigned char [Size_x*Size_y*Bpp];
+
+    //Allocate dynamic memory for f_hat and copy input image to it changing datatype to double (channel wise)
+    double *f_hat_r=new (nothrow) double [Size_x*Size_y];
+    double *f_hat_g=new (nothrow) double [Size_x*Size_y];
+    double *f_hat_b=new (nothrow) double [Size_x*Size_y];
+    
+    //run the experiment
+    double divisor=16;
+    MBVQ_experiment(Imagedata,Output_rgb,*floyd,*floyd_ref,f_hat_r,f_hat_g,f_hat_b,Size_x,Size_y,3,divisor);
+    
+    
+    //write the final output rgb image of the experiment
+    write(argv[2],Output_rgb,3,Size_x,Size_y);
+    //cout<<divisor-(double)*(Output_rgb+4506)<<" "<<(double)*(Output_rgb+4507)<<" "<<(double)*(Output_rgb+4508)<<endl;
+    cout<<"complete"<<endl;
+    return 0;
+}
+        
